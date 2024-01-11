@@ -1,0 +1,8 @@
+parameters:
+  network: main
+  key_name: Este
+  flavor: m1.medium
+  image: debian-11-genericcloud-1
+  wordpress_db_user: my-db-user
+  wordpress_db_name: my-db-name
+  wordpress_db_password: my-db-password

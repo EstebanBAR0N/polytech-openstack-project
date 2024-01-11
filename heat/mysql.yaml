@@ -1,0 +1,123 @@
+heat_template_version: 2018-08-31
+
+description: Template for deploying the database for WordPress on OpenStack
+
+# parameters
+
+parameters:
+  key_name:
+    type: string
+    description: Key pair name for SSH access
+    default: your-key-pair
+
+  flavor:
+    type: string
+    description: Flavor for the WordPress instance
+    default: m1.small
+
+  image:
+    type: string
+    description: Image ID or name for the WordPress instance
+    default: debian-11-genericcloud-1
+
+  network:
+    type: string
+    description: Name or ID of the network for the WordPress instance
+    default: your-network
+
+  ssh_security_group:
+    type: string
+    description: Security group for SSH access
+    default: ssh_security_group
+
+  db_security_group:
+    type: string
+    description: Security group for database access
+    default: db_security_group
+
+  wordpress_db_user:
+    type: string
+    description: Username for the WordPress database
+    default: your-db-user
+
+  wordpress_db_name:
+    type: string
+    description: Name for the WordPress database
+    default: your-db-name
+
+  wordpress_db_password:
+    type: string
+    description: Password for the WordPress database
+    default: your-db-password
+
+# resources
+
+resources:
+  # instances
+
+  mysql:
+    type: OS::Nova::Server
+    properties:
+      name: mysql-instance
+      key_name: { get_param: key_name }
+      flavor: { get_param: flavor }
+      image: { get_param: image }
+      networks:
+        - network: { get_param: network }
+      security_groups:
+        - { get_param: ssh_security_group }
+        - { get_param: db_security_group }
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io docker-compose
+            sudo mkdir -p /opt/mysql
+            cd /opt/mysql
+            cat <<EOF > docker-compose.yaml
+            version: '3'
+
+            services:
+              db:
+                image: docker.io/bitnami/mysql:8.2
+                ports:
+                  - "3306:3306"
+                environment:
+                  - ALLOW_EMPTY_PASSWORD=yes
+                  - MYSQL_DATABASE=wordpress_db_name
+                  - MYSQL_USER=wordpress_db_user
+                  - MYSQL_PASSWORD=wordpress_db_password
+                  - MYSQL_AUTHENTICATION_PLUGIN=mysql_native_password
+                volumes:
+                  - db_data:/var/lib/mysql
+
+            volumes:
+              db_data:
+            EOF
+            sudo docker-compose up -d
+          params:
+            wordpress_db_user: { get_param: wordpress_db_user }
+            wordpress_db_password: { get_param: wordpress_db_password }
+            wordpress_db_name: { get_param: wordpress_db_name }
+    depends_on: [db_security_group, ssh_security_group]
+
+  # floating IPs
+
+  mysql_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: public
+
+  # IP associations
+
+  associate_floating_ip_mysql:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: mysql_floating_ip }
+      port_id:
+        {
+          get_attr:
+            [mysql_instance, addresses, { get_param: network }, 0, port],
+        }
+    depends_on: [mysql_instance, mysql_floating_ip]

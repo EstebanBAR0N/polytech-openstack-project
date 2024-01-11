@@ -1,0 +1,2 @@
+openstack stack delete my-wordpress-stack --insecure
+openstack stack create -t main.yaml -e variables.yaml my-wordpress-stack --insecure

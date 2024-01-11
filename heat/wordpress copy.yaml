@@ -1,0 +1,220 @@
+heat_template_version: 2018-08-31
+
+description: Template for deploying WordPress on OpenStack
+
+# parameters
+
+parameters:
+  key_name:
+    type: string
+    description: Key pair name for SSH access
+    default: your-key-pair
+
+  flavor:
+    type: string
+    description: Flavor for the WordPress instance
+    default: m1.small
+
+  image:
+    type: string
+    description: Image ID or name for the WordPress instance
+    default: debian-11-genericcloud-1
+
+  network:
+    type: string
+    description: Name or ID of the network for the WordPress instance
+    default: your-network
+
+  wordpress_db_user:
+    type: string
+    description: Username for the WordPress database
+    default: your-db-user
+
+  wordpress_db_name:
+    type: string
+    description: Name for the WordPress database
+    default: your-db-name
+
+  wordpress_db_password:
+    type: string
+    description: Password for the WordPress database
+    default: your-db-password
+
+# resources
+
+resources:
+  # security groups
+
+  ssh_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: ssh_security_group
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+
+  http_https_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: http_https_security_group
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+
+  db_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: db_security_group
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3306
+          port_range_max: 3306
+
+  # instances
+
+  mysql_instance:
+    type: OS::Nova::Server
+    properties:
+      name: mysql-instance
+      key_name: { get_param: key_name }
+      flavor: { get_param: flavor }
+      image: { get_param: image }
+      networks:
+        - network: { get_param: network }
+      security_groups:
+        - { get_resource: ssh_security_group }
+        - { get_resource: db_security_group }
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io docker-compose
+            sudo mkdir -p /opt/mysql
+            cd /opt/mysql
+            cat <<EOF > docker-compose.yaml
+            version: '3'
+
+            services:
+              db:
+                image: docker.io/bitnami/mysql:8.2
+                ports:
+                  - "3306:3306"
+                environment:
+                  - ALLOW_EMPTY_PASSWORD=yes
+                  - MYSQL_DATABASE=wordpress_db_name
+                  - MYSQL_USER=wordpress_db_user
+                  - MYSQL_PASSWORD=wordpress_db_password
+                  - MYSQL_AUTHENTICATION_PLUGIN=mysql_native_password
+                volumes:
+                  - db_data:/var/lib/mysql
+
+            volumes:
+              db_data:
+            EOF
+            sudo docker-compose up -d
+          params:
+            wordpress_db_user: { get_param: wordpress_db_user }
+            wordpress_db_password: { get_param: wordpress_db_password }
+            wordpress_db_name: { get_param: wordpress_db_name }
+    depends_on: [db_security_group, ssh_security_group]
+
+  wordpress_instance:
+    type: OS::Nova::Server
+    properties:
+      name: wordpress-instance
+      key_name: { get_param: key_name }
+      flavor: { get_param: flavor }
+      image: { get_param: image }
+      networks:
+        - network: { get_param: network }
+      security_groups:
+        - { get_resource: ssh_security_group }
+        - { get_resource: http_https_security_group }
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io docker-compose
+            sudo mkdir -p /opt/wordpress
+            cd /opt/wordpress
+            cat <<EOF > docker-compose.yaml
+            version: '3'
+
+            services:
+              wordpress:
+                image: wordpress:latest
+                ports:
+                  - "80:80"
+                environment:
+                  WORDPRESS_DB_HOST: "wordpress_db_host:3306"
+                  WORDPRESS_DB_USER: wordpress_db_user
+                  WORDPRESS_DB_PASSWORD: wordpress_db_password
+                  WORDPRESS_DB_NAME: wordpress_db_name
+                volumes:
+                  - wordpress_data:/var/www/html
+
+            volumes:
+              wordpress_data:
+            EOF
+            sudo docker-compose up -d
+          params:
+            wordpress_db_host: { get_attr: [mysql_instance, first_address] }
+            wordpress_db_user: { get_param: wordpress_db_user }
+            wordpress_db_password: { get_param: wordpress_db_password }
+            wordpress_db_name: { get_param: wordpress_db_name }
+    depends_on: [mysql_instance, http_https_security_group, ssh_security_group]
+
+  # floating IPs
+
+  mysql_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: public
+
+  wordpress_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: public
+
+  # IP associations
+
+  associate_floating_ip_mysql:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: mysql_floating_ip }
+      port_id:
+        {
+          get_attr:
+            [mysql_instance, addresses, { get_param: network }, 0, port],
+        }
+    depends_on: [mysql_instance, mysql_floating_ip]
+
+  associate_floating_ip_wordpress:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: wordpress_floating_ip }
+      port_id:
+        {
+          get_attr:
+            [wordpress_instance, addresses, { get_param: network }, 0, port],
+        }
+    depends_on: [wordpress_instance, wordpress_floating_ip]
+
+# outputs
+
+outputs:
+  server_instance_floating_ip:
+    description: IP address of the WordPress instance
+    value: { get_attr: [wordpress_instance, first_address] }
+    depends_on: [wordpress_instance]

@@ -1,0 +1,123 @@
+heat_template_version: 2018-08-31
+
+description: Template for deploying WordPress (front) on OpenStack
+
+# parameters
+
+parameters:
+  key_name:
+    type: string
+    description: Key pair name for SSH access
+    default: your-key-pair
+
+  flavor:
+    type: string
+    description: Flavor for the WordPress instance
+    default: m1.small
+
+  image:
+    type: string
+    description: Image ID or name for the WordPress instance
+    default: debian-11-genericcloud-1
+
+  network:
+    type: string
+    description: Name or ID of the network for the WordPress instance
+    default: your-network
+
+  ssh_security_group:
+    type: string
+    description: Security group for SSH access
+    default: ssh_security_group
+
+  http_https_security_group:
+    type: string
+    description: Security group for HTTP and HTTPS access
+    default: http_https_security_group
+
+  wordpress_db_user:
+    type: string
+    description: Username for the WordPress database
+    default: your-db-user
+
+  wordpress_db_name:
+    type: string
+    description: Name for the WordPress database
+    default: your-db-name
+
+  wordpress_db_password:
+    type: string
+    description: Password for the WordPress database
+    default: your-db-password
+
+# resources
+
+resources:
+  # instances
+
+  wordpress:
+    type: OS::Nova::Server
+    properties:
+      name: wordpress-instance
+      key_name: { get_param: key_name }
+      flavor: { get_param: flavor }
+      image: { get_param: image }
+      networks:
+        - network: { get_param: network }
+      security_groups:
+        - { get_param: ssh_security_group }
+        - { get_param: http_https_security_group }
+      user_data:
+        str_replace:
+          template: |
+            #!/bin/bash
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io docker-compose
+            sudo mkdir -p /opt/wordpress
+            cd /opt/wordpress
+            cat <<EOF > docker-compose.yaml
+            version: '3'
+
+            services:
+              wordpress:
+                image: wordpress:latest
+                ports:
+                  - "80:80"
+                environment:
+                  WORDPRESS_DB_HOST: "wordpress_db_host:3306"
+                  WORDPRESS_DB_USER: wordpress_db_user
+                  WORDPRESS_DB_PASSWORD: wordpress_db_password
+                  WORDPRESS_DB_NAME: wordpress_db_name
+                volumes:
+                  - wordpress_data:/var/www/html
+
+            volumes:
+              wordpress_data:
+            EOF
+            sudo docker-compose up -d
+          params:
+            wordpress_db_host: { get_attr: [mysql_instance, first_address] }
+            wordpress_db_user: { get_param: wordpress_db_user }
+            wordpress_db_password: { get_param: wordpress_db_password }
+            wordpress_db_name: { get_param: wordpress_db_name }
+    depends_on: [mysql_instance, http_https_security_group, ssh_security_group]
+
+  # floating IPs
+
+  wordpress_floating_ip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: public
+
+  # IP associations
+
+  associate_floating_ip_wordpress:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: wordpress_floating_ip }
+      port_id:
+        {
+          get_attr:
+            [wordpress_instance, addresses, { get_param: network }, 0, port],
+        }
+    depends_on: [wordpress_instance, wordpress_floating_ip]

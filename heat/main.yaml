@@ -1,0 +1,175 @@
+heat_template_version: 2018-08-31
+
+description: Template for deploying WordPress on OpenStack
+
+# parameters
+
+parameters:
+  key_name:
+    type: string
+    description: Key pair name for SSH access
+    default: your-key-pair
+
+  flavor:
+    type: string
+    description: Flavor for the WordPress instance
+    default: m1.small
+
+  image:
+    type: string
+    description: Image ID or name for the WordPress instance
+    default: debian-11-genericcloud-1
+
+  network:
+    type: string
+    description: Name or ID of the network for the WordPress instance
+    default: your-network
+
+  wordpress_db_user:
+    type: string
+    description: Username for the WordPress database
+    default: your-db-user
+
+  wordpress_db_name:
+    type: string
+    description: Name for the WordPress database
+    default: your-db-name
+
+  wordpress_db_password:
+    type: string
+    description: Password for the WordPress database
+    default: your-db-password
+
+# resources
+
+resources:
+  # security groups
+
+  ssh_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: ssh_security_group
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+
+  http_https_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: http_https_security_group
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 443
+          port_range_max: 443
+
+  db_security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: db_security_group
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 3306
+          port_range_max: 3306
+
+  # instances
+
+  mysql:
+    type: mysql.yaml
+    properties:
+      key_name: { get_param: key_name }
+      flavor: { get_param: flavor }
+      image: { get_param: image }
+      network: { get_param: network }
+      ssh_security_group: { get_resource: ssh_security_group }
+      db_security_group: { get_resource: db_security_group }
+      wordpress_db_user: { get_param: wordpress_db_user }
+      wordpress_db_name: { get_param: wordpress_db_name }
+      wordpress_db_password: { get_param: wordpress_db_password }
+
+  wordpress:
+    type: wordpress.yaml
+    properties:
+      key_name: { get_param: key_name }
+      flavor: { get_param: flavor }
+      image: { get_param: image }
+      network: { get_param: network }
+      ssh_security_group: { get_resource: ssh_security_group }
+      http_https_security_group: { get_resource: http_https_security_group }
+      wordpress_db_user: { get_param: wordpress_db_user }
+      wordpress_db_name: { get_param: wordpress_db_name }
+      wordpress_db_password: { get_param: wordpress_db_password }
+
+  # # autoscaling
+
+  # scaleup_policy:
+  #   type: OS::Heat::ScalingPolicy
+  #   properties:
+  #     adjustment_type: change_in_capacity
+  #     auto_scaling_group_id: { get_resource: scaleup_group }
+  #     cooldown: 60
+  #     scaling_adjustment: 1
+
+  # scaledown_policy:
+  #   type: OS::Heat::ScalingPolicy
+  #   properties:
+  #     adjustment_type: change_in_capacity
+  #     auto_scaling_group_id: { get_resource: scaleup_group }
+  #     cooldown: 60
+  #     scaling_adjustment: -1
+
+  # cpu_alarm_high:
+  #   type: OS::Aodh::GnocchiAggregationByResourcesAlarm
+  #   properties:
+  #     description: Scale up instance if CPU > 50%
+  #     metric: cpu
+  #     aggregation_method: rate:mean
+  #     granularity: 60
+  #     evaluation_periods: 3
+  #     threshold: 60000000000.0
+  #     resource_type: instance
+  #     comparison_operator: gt
+  #     alarm_actions:
+  #       - str_replace:
+  #           template: trust+url
+  #           params:
+  #             url: { get_attr: [scaleup_policy, signal_url] }
+  #     query:
+  #       list_join:
+  #         - ""
+  #         - - { "=": { server_group: { get_param: "OS::stack_id" } } }
+
+  # cpu_alarm_low:
+  #   type: OS::Aodh::GnocchiAggregationByResourcesAlarm
+  #   properties:
+  #     description: Scale down instance if CPU < 20%
+  #     metric: cpu
+  #     aggregation_method: rate:mean
+  #     granularity: 60
+  #     evaluation_periods: 3
+  #     threshold: 24000000000.0
+  #     resource_type: instance
+  #     comparison_operator: lt
+  #     alarm_actions:
+  #       - str_replace:
+  #           template: trust+url
+  #           params:
+  #             url: { get_attr: [scaledown_policy, signal_url] }
+  #     query:
+  #       list_join:
+  #         - ""
+  #         - - { "=": { server_group: { get_param: "OS::stack_id" } } }
+
+# outputs
+
+outputs:
+  wordpress_floating_ip:
+    description: IP address of the WordPress instance
+    value: { get_attr: [wordpress, first_address] }
