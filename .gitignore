@@ -1,0 +1,7 @@
+./terraform/terraform.tfvars
+./terraform/terraform.tfstate
+./terraform/terraform.tfstate.backup
+./terraform/clouds.yaml
+./heat/ebaron-openrc.sh
+./ansible/clouds.yaml
+./ansible/ebaron-openrc.sh
