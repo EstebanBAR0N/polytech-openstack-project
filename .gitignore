@@ -2,6 +2,8 @@ terraform/terraform.tfvars
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 terraform/clouds.yaml
+terraform/.terraform
+terraform/terraform.lock.hcl
 heat/ebaron-openrc.sh
 ansible/clouds.yaml
 ansible/ebaron-openrc.sh
